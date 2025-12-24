@@ -1,6 +1,7 @@
 import { Actor } from 'apify';
 import { PlaywrightCrawler, ProxyConfiguration } from 'crawlee';
 import ntpClient from 'ntp-client';
+import log from '@apify/log';
 
 /**
  * Southwest Airlines Auto Check-In Actor (High-Precision Version)
