@@ -19,7 +19,7 @@ import ntpClient from 'ntp-client';
 await Actor.init();
 
 // Optimize logging to reduce I/O latency during timing-critical operations
-import { log } from '@apify/log';
+import log from '@apify/log';
 log.setLevel(process.env.APIFY_LOG_LEVEL || 'INFO');
 
 
