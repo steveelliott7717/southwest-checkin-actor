@@ -19,7 +19,7 @@ import ntpClient from 'ntp-client';
 await Actor.init();
 
 // Optimize logging to reduce I/O latency during timing-critical operations
-Actor.log.setLevel(process.env.APIFY_LOG_LEVEL || 'INFO');
+log.setLevel(process.env.APIFY_LOG_LEVEL || 'INFO');
 
 try {
     const input = await Actor.getInput();
