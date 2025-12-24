@@ -1,16 +1,17 @@
 {
-  "name": "southwest-checkin-actor",
-  "version": "1.0.0",
-  "description": "Automated Southwest Airlines check-in actor",
+  "name": "southwest-checkin-actor-precision",
+  "version": "2.0.0",
+  "description": "High-precision Southwest Airlines auto check-in with NTP sync and sub-100ms timing",
   "type": "module",
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js"
   },
   "dependencies": {
-    "apify": "^3.1.0",
-    "crawlee": "^3.5.0",
-    "playwright": "^1.40.0"
+    "apify": "^3.5.2",
+    "crawlee": "^3.15.3",
+    "playwright": "^1.40.0",
+    "ntp-client": "^0.5.3"
   },
   "engines": {
     "node": ">=18.0.0"
