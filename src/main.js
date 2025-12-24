@@ -392,11 +392,32 @@ try {
                 
                 await page.evaluate((delay) => {
                     return new Promise((resolve) => {
-                        const btn = document.querySelector('button[type="submit"], button:has-text("Check in"), .button--yellow');
+                        // Try multiple ways to find a check-in button
+                        let btn =
+                            document.querySelector('button[type="submit"]') ||
+                            Array.from(document.querySelectorAll('button'))
+                                .find(b => /check\s*in/i.test(b.textContent || '')) ||
+                            document.querySelector('.button--yellow');
+                
                         if (!btn) {
                             resolve({ error: 'Button not found' });
                             return;
                         }
+                
+                        console.log(`Scheduling click in ${delay}ms`);
+                
+                        if (delay <= 0) {
+                            btn.click();
+                            resolve({ clicked: true, delay: 0 });
+                        } else {
+                            setTimeout(() => {
+                                btn.click();
+                                resolve({ clicked: true, delay });
+                            }, delay);
+                        }
+                    });
+                }, delayMs);
+
 
                         console.log(`Scheduling click in ${delay}ms`);
                         
