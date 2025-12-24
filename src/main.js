@@ -149,17 +149,20 @@ try {
 
                 await page.waitForTimeout(500);
 
-                // Step 3: Fill in first name (SAME PAGE)
+                // Step 3: Fill in first name (SAME PAGE) - try all possible methods
                 console.log('Filling first name...');
                 
+                // First, try standard selectors
                 const firstNameSelectors = [
                     '#firstName',
                     '#first-name',
                     'input[name="firstName"]',
                     'input[placeholder*="First"]',
+                    'input[aria-label*="first" i]',
                 ];
 
                 let firstNameFilled = false;
+                
                 for (const selector of firstNameSelectors) {
                     try {
                         const input = await page.$(selector);
@@ -176,23 +179,47 @@ try {
                     }
                 }
 
+                // If still not found, use position-based approach (2nd text input on page)
+                if (!firstNameFilled) {
+                    console.log('Trying position-based approach for first name...');
+                    try {
+                        const allInputs = await page.$$('input[type="text"], input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
+                        console.log(`Found ${allInputs.length} inputs on page`);
+                        
+                        if (allInputs.length >= 2) {
+                            // First input is confirmation, second should be first name
+                            const firstNameInput = allInputs[1];
+                            await firstNameInput.scrollIntoViewIfNeeded();
+                            await firstNameInput.click();
+                            await firstNameInput.fill(firstName);
+                            firstNameFilled = true;
+                            console.log('Filled first name using position-based approach (2nd input)');
+                        }
+                    } catch (e) {
+                        console.log('Position-based first name fill failed:', e.message);
+                    }
+                }
+
                 if (!firstNameFilled) {
                     throw new Error('Could not find or fill first name input field');
                 }
 
                 await page.waitForTimeout(500);
 
-                // Step 4: Fill in last name (SAME PAGE)
+                // Step 4: Fill in last name (SAME PAGE) - try all possible methods
                 console.log('Filling last name...');
                 
+                // First, try standard selectors
                 const lastNameSelectors = [
                     '#lastName',
                     '#last-name',
                     'input[name="lastName"]',
                     'input[placeholder*="Last"]',
+                    'input[aria-label*="last" i]',
                 ];
 
                 let lastNameFilled = false;
+                
                 for (const selector of lastNameSelectors) {
                     try {
                         const input = await page.$(selector);
@@ -206,6 +233,27 @@ try {
                     } catch (e) {
                         console.log(`Last name selector ${selector} failed:`, e.message);
                         continue;
+                    }
+                }
+
+                // If still not found, use position-based approach (3rd text input on page)
+                if (!lastNameFilled) {
+                    console.log('Trying position-based approach for last name...');
+                    try {
+                        const allInputs = await page.$$('input[type="text"], input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
+                        console.log(`Found ${allInputs.length} inputs for last name`);
+                        
+                        if (allInputs.length >= 3) {
+                            // First input is confirmation, second is first name, third is last name
+                            const lastNameInput = allInputs[2];
+                            await lastNameInput.scrollIntoViewIfNeeded();
+                            await lastNameInput.click();
+                            await lastNameInput.fill(lastName);
+                            lastNameFilled = true;
+                            console.log('Filled last name using position-based approach (3rd input)');
+                        }
+                    } catch (e) {
+                        console.log('Position-based last name fill failed:', e.message);
                     }
                 }
 
