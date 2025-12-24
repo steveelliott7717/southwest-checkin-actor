@@ -419,22 +419,6 @@ try {
                 }, delayMs);
 
 
-                        console.log(`Scheduling click in ${delay}ms`);
-                        
-                        if (delay <= 0) {
-                            // Click immediately
-                            btn.click();
-                            resolve({ clicked: true, delay: 0 });
-                        } else {
-                            // Schedule click
-                            setTimeout(() => {
-                                btn.click();
-                                resolve({ clicked: true, delay });
-                            }, delay);
-                        }
-                    });
-                }, delayMs);
-
                 const actualSubmitTime = Date.now() + localDriftMs;
                 result.actualSubmitTime = new Date(actualSubmitTime).toISOString();
                 result.timingOffset = actualSubmitTime - checkinOpensAtMs;
