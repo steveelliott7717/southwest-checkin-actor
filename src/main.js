@@ -19,9 +19,7 @@ import ntpClient from 'ntp-client';
 await Actor.init();
 
 // Optimize logging to reduce I/O latency during timing-critical operations
-import log from '@apify/log';
-log.setLevel(process.env.APIFY_LOG_LEVEL || 'INFO');
-
+Actor.log.setLevel(process.env.APIFY_LOG_LEVEL || 'INFO');
 
 try {
     const input = await Actor.getInput();
@@ -143,7 +141,7 @@ try {
     });
     
     const submitProxy = await Actor.createProxyConfiguration({
-        groups: ['BUYPROXIES94952'],  // 👈 use the actual group name
+        groups: ['DATACENTER'],  // Or 'SW_FASTLANE_USC' if you create a custom group
         countryCode: 'US',
     });
 
@@ -260,13 +258,13 @@ try {
                     if (timeSinceHeartbeat >= 120000) { // 2 minutes
                         const msRemaining = (checkinOpensAtMs + backupOffset) - (Date.now() + localDriftMs);
                         console.log(`💓 Heartbeat: System healthy, ${Math.floor(msRemaining / 1000)}s until submit`);
-                        await Actor.setValue('heartbeat', {
+                        await Actor.setValue('heartbeat', JSON.stringify({
                             timestamp: new Date().toISOString(),
                             status: 'running',
                             msRemaining,
                             instanceType,
                             driftMs: localDriftMs,
-                        }, { contentType: 'application/json' });
+                        }), { contentType: 'application/json' });
                         lastHeartbeat = Date.now();
                     }
                     
@@ -362,12 +360,12 @@ try {
                 console.log(`📊 Adaptive compensation: +${adaptiveOffset}ms (half of median RTT)`);
                 
                 // Store calibrated RTT for future runs
-                await Actor.setValue('calibrated-rtt', {
+                await Actor.setValue('calibrated-rtt', JSON.stringify({
                     timestamp: new Date().toISOString(),
                     medianRTT,
                     samples: rttSamples,
                     adaptiveOffset,
-                }, { contentType: 'application/json' });
+                }), { contentType: 'application/json' });
 
                 // Schedule click inside browser using setTimeout()
                 // This eliminates the 20-60ms DevTools protocol delay
@@ -383,13 +381,13 @@ try {
                 console.log(`📊 Click will fire in ${delayMs}ms`);
                 
                 // Store real-time drift telemetry
-                await Actor.setValue('drift-telemetry', {
+                await Actor.setValue('drift-telemetry', JSON.stringify({
                     timestamp: new Date().toISOString(),
                     instanceType,
                     driftChecks: result.telemetry.driftChecks,
                     finalDrift: currentTime - Date.now(),
                     targetSubmitTime: new Date(targetSubmitTime).toISOString(),
-                }, { contentType: 'application/json' });
+                }), { contentType: 'application/json' });
                 
                 await page.evaluate((delay) => {
                     return new Promise((resolve) => {
