@@ -390,7 +390,7 @@ try {
                     targetSubmitTime: new Date(targetSubmitTime).toISOString(),
                 }), { contentType: 'application/json' });
                 
-                await page.evaluate((delay) => {
+                const clickInfo = await page.evaluate((delay) => {
                     return new Promise((resolve) => {
                         // Try multiple ways to find a check-in button
                         let btn =
@@ -404,19 +404,25 @@ try {
                             return;
                         }
                 
-                        console.log(`Scheduling click in ${delay}ms`);
+                        // Record the scheduling and actual click timestamps
+                        const scheduledAt = new Date().toISOString();
+                
+                        const performClick = () => {
+                            const clickTime = new Date().toISOString();
+                            btn.click();
+                            resolve({ clicked: true, delay, scheduledAt, clickTime });
+                        };
                 
                         if (delay <= 0) {
-                            btn.click();
-                            resolve({ clicked: true, delay: 0 });
+                            performClick();
                         } else {
-                            setTimeout(() => {
-                                btn.click();
-                                resolve({ clicked: true, delay });
-                            }, delay);
+                            setTimeout(performClick, delay);
                         }
                     });
                 }, delayMs);
+                
+                console.log(`🕐 Click scheduled at: ${clickInfo.scheduledAt}`);
+                console.log(`🖱️ Actual click executed at: ${clickInfo.clickTime}`);
 
 
                 const actualSubmitTime = Date.now() + localDriftMs;
