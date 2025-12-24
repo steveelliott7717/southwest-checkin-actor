@@ -2,69 +2,81 @@ import { Actor } from 'apify';
 import { PlaywrightCrawler, ProxyConfiguration } from 'crawlee';
 
 /**
- * Southwest Airlines Auto Check-In Actor
+ * Southwest Airlines Auto Check-In Actor (Pre-Load & Wait Version)
+ * 
+ * This actor:
+ * 1. Loads the page and fills the form early (T-3 minutes)
+ * 2. Syncs time with Southwest's servers
+ * 3. Waits until exactly T-0
+ * 4. Submits at the precise moment
  * 
  * Input:
  * {
  *   "confirmationNumber": "ABC123",
  *   "firstName": "JOHN",
- *   "lastName": "DOE"
- * }
- * 
- * Output:
- * {
- *   "success": true,
- *   "boardingPosition": "A24",
- *   "confirmationNumber": "ABC123",
- *   "timestamp": "2025-12-24T12:00:00Z",
- *   "error": null
+ *   "lastName": "DOE",
+ *   "checkinOpensAt": "2025-12-24T16:50:00.000Z"
  * }
  */
 
 await Actor.init();
 
 try {
-    // Get input from Apify
     const input = await Actor.getInput();
     
     if (!input) {
         throw new Error('No input provided');
     }
 
-    const { confirmationNumber, firstName, lastName } = input;
+    const { confirmationNumber, firstName, lastName, checkinOpensAt } = input;
 
-    // Validate inputs
-    if (!confirmationNumber || !firstName || !lastName) {
-        throw new Error('Missing required fields: confirmationNumber, firstName, lastName');
+    if (!confirmationNumber || !firstName || !lastName || !checkinOpensAt) {
+        throw new Error('Missing required fields: confirmationNumber, firstName, lastName, checkinOpensAt');
     }
 
-    console.log('Starting Southwest check-in for:', {
+    const checkinOpensAtMs = new Date(checkinOpensAt).getTime();
+
+    console.log('Starting Southwest check-in with pre-load strategy:', {
         confirmationNumber,
         firstName,
         lastName,
+        checkinOpensAt,
     });
 
-    // Setup result object
     const result = {
         success: false,
         boardingPosition: null,
         confirmationNumber,
+        checkinOpensAt,
+        actualSubmitTime: null,
+        timingOffset: null,
         timestamp: new Date().toISOString(),
         error: null,
         screenshots: [],
     };
 
-    // Configure RESIDENTIAL proxy - CRITICAL for bypassing Southwest's blocking
-    // Apify's datacenter IPs are blocked, so we MUST use residential proxies
+    // Function to get Southwest's server time
+    async function getSouthwestTime() {
+        try {
+            const response = await fetch('https://www.southwest.com/', { method: 'HEAD' });
+            const dateHeader = response.headers.get('date');
+            if (dateHeader) {
+                return new Date(dateHeader).getTime();
+            }
+        } catch (e) {
+            console.log('Failed to get Southwest time, using local:', e.message);
+        }
+        return Date.now(); // Fallback to local time
+    }
+
     const proxyConfiguration = await Actor.createProxyConfiguration({
         groups: ['RESIDENTIAL'],
         countryCode: 'US',
     });
 
-    // Create crawler
     const crawler = new PlaywrightCrawler({
         proxyConfiguration,
-        requestHandlerTimeoutSecs: 120, // Increased from default 60s to handle slow Southwest pages
+        requestHandlerTimeoutSecs: 300, // 5 minutes to allow for wait time
         launchContext: {
             launchOptions: {
                 headless: true,
@@ -72,329 +84,192 @@ try {
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-web-security',
                 ],
             },
         },
         preNavigationHooks: [
-            async ({ page }, goToOptions) => {
-                // Set realistic viewport
+            async ({ page }) => {
                 await page.setViewportSize({ width: 1920, height: 1080 });
-                
-                // Set user agent
                 await page.setExtraHTTPHeaders({
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept-Language': 'en-US,en;q=0.9',
                 });
             },
         ],
-        requestHandler: async ({ page, request }) => {
-            console.log(`Processing ${request.url}`);
-
+        requestHandler: async ({ page }) => {
             try {
-                // Step 1: Navigate to check-in page
-                console.log('Navigating to check-in page...');
+                // PHASE 1: Load page and fill form
+                console.log('═══ PHASE 1: Loading and filling form ═══');
                 await page.goto('https://www.southwest.com/air/check-in/index.html', {
                     waitUntil: 'domcontentloaded',
                     timeout: 30000,
                 });
 
-                // Give page time to initialize
                 await page.waitForTimeout(2000);
 
-                // Take screenshot of initial page
                 const screenshotInitial = await page.screenshot({ fullPage: false });
                 await Actor.setValue('screenshot-initial', screenshotInitial, { contentType: 'image/png' });
                 result.screenshots.push('screenshot-initial');
-                console.log('Initial page loaded');
+                console.log('✓ Page loaded');
 
-                // Wait for form to be visible
-                console.log('Waiting for check-in form...');
-                await page.waitForSelector('form, #form-mixin--air-check-in-form, input[name="confirmationNumber"]', { 
+                await page.waitForSelector('form, input[name="confirmationNumber"]', { 
                     timeout: 10000,
                     state: 'visible'
                 });
 
-                // Give Southwest's JavaScript time to initialize
                 await page.waitForTimeout(1000);
 
-                // Step 2: Fill in all three fields on the SAME PAGE
-                console.log('Filling confirmation number...');
-                
-                const confirmationSelectors = [
-                    '#confirmationNumber',
-                    '#confirmation-number',
-                    'input[name="confirmationNumber"]',
-                ];
+                // Fill confirmation number
+                console.log('Filling form fields...');
+                const allInputs = await page.$$('input[type="text"], input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
+                console.log(`Found ${allInputs.length} input fields`);
 
-                let confirmationFilled = false;
-                for (const selector of confirmationSelectors) {
-                    try {
-                        const input = await page.$(selector);
-                        if (input && await input.isVisible()) {
-                            await input.click();
-                            await input.fill(confirmationNumber);
-                            confirmationFilled = true;
-                            console.log(`Filled confirmation number using selector: ${selector}`);
-                            break;
-                        }
-                    } catch (e) {
-                        continue;
-                    }
+                if (allInputs.length < 3) {
+                    throw new Error(`Expected 3 inputs, found ${allInputs.length}`);
                 }
 
-                if (!confirmationFilled) {
-                    throw new Error('Could not find or fill confirmation number input field');
-                }
+                await allInputs[0].scrollIntoViewIfNeeded();
+                await allInputs[0].click();
+                await allInputs[0].fill(confirmationNumber);
+                console.log('✓ Filled confirmation number');
 
                 await page.waitForTimeout(500);
 
-                // Step 3: Fill in first name (SAME PAGE) - try all possible methods
-                console.log('Filling first name...');
-                
-                // First, try standard selectors
-                const firstNameSelectors = [
-                    '#firstName',
-                    '#first-name',
-                    'input[name="firstName"]',
-                    'input[placeholder*="First"]',
-                    'input[aria-label*="first" i]',
-                ];
-
-                let firstNameFilled = false;
-                
-                for (const selector of firstNameSelectors) {
-                    try {
-                        const input = await page.$(selector);
-                        if (input && await input.isVisible()) {
-                            await input.click();
-                            await input.fill(firstName);
-                            firstNameFilled = true;
-                            console.log(`Filled first name using selector: ${selector}`);
-                            break;
-                        }
-                    } catch (e) {
-                        console.log(`First name selector ${selector} failed:`, e.message);
-                        continue;
-                    }
-                }
-
-                // If still not found, use position-based approach (2nd text input on page)
-                if (!firstNameFilled) {
-                    console.log('Trying position-based approach for first name...');
-                    try {
-                        const allInputs = await page.$$('input[type="text"], input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
-                        console.log(`Found ${allInputs.length} inputs on page`);
-                        
-                        if (allInputs.length >= 2) {
-                            // First input is confirmation, second should be first name
-                            const firstNameInput = allInputs[1];
-                            await firstNameInput.scrollIntoViewIfNeeded();
-                            await firstNameInput.click();
-                            await firstNameInput.fill(firstName);
-                            firstNameFilled = true;
-                            console.log('Filled first name using position-based approach (2nd input)');
-                        }
-                    } catch (e) {
-                        console.log('Position-based first name fill failed:', e.message);
-                    }
-                }
-
-                if (!firstNameFilled) {
-                    throw new Error('Could not find or fill first name input field');
-                }
+                await allInputs[1].scrollIntoViewIfNeeded();
+                await allInputs[1].click();
+                await allInputs[1].fill(firstName);
+                console.log('✓ Filled first name');
 
                 await page.waitForTimeout(500);
 
-                // Step 4: Fill in last name (SAME PAGE) - try all possible methods
-                console.log('Filling last name...');
-                
-                // First, try standard selectors
-                const lastNameSelectors = [
-                    '#lastName',
-                    '#last-name',
-                    'input[name="lastName"]',
-                    'input[placeholder*="Last"]',
-                    'input[aria-label*="last" i]',
-                ];
-
-                let lastNameFilled = false;
-                
-                for (const selector of lastNameSelectors) {
-                    try {
-                        const input = await page.$(selector);
-                        if (input && await input.isVisible()) {
-                            await input.click();
-                            await input.fill(lastName);
-                            lastNameFilled = true;
-                            console.log(`Filled last name using selector: ${selector}`);
-                            break;
-                        }
-                    } catch (e) {
-                        console.log(`Last name selector ${selector} failed:`, e.message);
-                        continue;
-                    }
-                }
-
-                // If still not found, use position-based approach (3rd text input on page)
-                if (!lastNameFilled) {
-                    console.log('Trying position-based approach for last name...');
-                    try {
-                        const allInputs = await page.$$('input[type="text"], input:not([type="hidden"]):not([type="submit"]):not([type="button"])');
-                        console.log(`Found ${allInputs.length} inputs for last name`);
-                        
-                        if (allInputs.length >= 3) {
-                            // First input is confirmation, second is first name, third is last name
-                            const lastNameInput = allInputs[2];
-                            await lastNameInput.scrollIntoViewIfNeeded();
-                            await lastNameInput.click();
-                            await lastNameInput.fill(lastName);
-                            lastNameFilled = true;
-                            console.log('Filled last name using position-based approach (3rd input)');
-                        }
-                    } catch (e) {
-                        console.log('Position-based last name fill failed:', e.message);
-                    }
-                }
-
-                if (!lastNameFilled) {
-                    throw new Error('Could not find or fill last name input field');
-                }
+                await allInputs[2].scrollIntoViewIfNeeded();
+                await allInputs[2].click();
+                await allInputs[2].fill(lastName);
+                console.log('✓ Filled last name');
 
                 await page.waitForTimeout(1000);
 
-                // Take screenshot after filling ALL fields
-                const screenshotForm = await page.screenshot({ fullPage: false });
-                await Actor.setValue('screenshot-form-filled', screenshotForm, { contentType: 'image/png' });
+                const screenshotFilled = await page.screenshot({ fullPage: false });
+                await Actor.setValue('screenshot-form-filled', screenshotFilled, { contentType: 'image/png' });
                 result.screenshots.push('screenshot-form-filled');
-                console.log('All fields filled successfully');
+                console.log('✓ Form filled completely');
 
-                // Step 5: Now click the "Check in" button
-                console.log('Clicking check-in button...');
+                // PHASE 2: Wait for precise moment
+                console.log('═══ PHASE 2: Waiting for check-in to open ═══');
                 
-                const checkInButtonSelectors = [
-                    'button[type="submit"]',
-                    'button:has-text("Check in")',
-                    '.button--yellow',
-                    'button.button--yellow',
-                ];
+                let lastSyncTime = await getSouthwestTime();
+                console.log(`Check-in opens at: ${new Date(checkinOpensAtMs).toISOString()}`);
+                console.log(`Southwest time now: ${new Date(lastSyncTime).toISOString()}`);
 
-                let checkInClicked = false;
-                for (const selector of checkInButtonSelectors) {
-                    try {
-                        const button = await page.$(selector);
-                        if (button && await button.isVisible()) {
-                            await button.click();
-                            checkInClicked = true;
-                            console.log(`Clicked check-in button using selector: ${selector}`);
-                            break;
+                while (true) {
+                    const southwestNow = await getSouthwestTime();
+                    const msUntilCheckin = checkinOpensAtMs - southwestNow;
+                    
+                    if (msUntilCheckin <= 0) {
+                        console.log('🎯 Check-in time reached! Submitting NOW!');
+                        break;
+                    }
+
+                    if (msUntilCheckin <= 5000) {
+                        // Within 5 seconds - poll frequently
+                        if (msUntilCheckin % 1000 < 200) { // Log every ~1 second
+                            console.log(`⏱️  ${(msUntilCheckin / 1000).toFixed(1)}s until check-in...`);
                         }
-                    } catch (e) {
-                        continue;
+                        await page.waitForTimeout(100); // Poll every 100ms
+                    } else if (msUntilCheckin <= 60000) {
+                        // Within 1 minute - poll every second
+                        console.log(`⏱️  ${Math.floor(msUntilCheckin / 1000)}s until check-in...`);
+                        await page.waitForTimeout(1000);
+                    } else {
+                        // More than 1 minute away - poll every 5 seconds
+                        const secondsRemaining = Math.floor(msUntilCheckin / 1000);
+                        console.log(`⏳ ${Math.floor(secondsRemaining / 60)}m ${secondsRemaining % 60}s until check-in...`);
+                        await page.waitForTimeout(5000);
                     }
                 }
 
-                if (!checkInClicked) {
-                    throw new Error('Could not find or click check-in button');
+                // PHASE 3: Submit at precise moment
+                console.log('═══ PHASE 3: Submitting check-in ═══');
+                const submitStartTime = Date.now();
+                
+                const submitButton = await page.$('button[type="submit"], button:has-text("Check in"), .button--yellow');
+                if (!submitButton) {
+                    throw new Error('Could not find submit button');
                 }
 
-                console.log('Check-in button clicked, waiting for confirmation page...');
+                await submitButton.click();
+                const actualSubmitTime = Date.now();
+                result.actualSubmitTime = new Date(actualSubmitTime).toISOString();
+                result.timingOffset = actualSubmitTime - checkinOpensAtMs;
+                
+                console.log(`✓ Submitted at: ${new Date(actualSubmitTime).toISOString()}`);
+                console.log(`✓ Timing offset: ${result.timingOffset}ms ${result.timingOffset > 0 ? 'late' : 'early'}`);
 
-                // Wait for confirmation/boarding pass page
+                // Wait for result page
                 await page.waitForTimeout(5000);
 
-                // Take screenshot of boarding pass page
                 const screenshotResult = await page.screenshot({ fullPage: true });
                 await Actor.setValue('screenshot-result', screenshotResult, { contentType: 'image/png' });
                 result.screenshots.push('screenshot-result');
 
-
-                // Step 7: Extract boarding position
-                console.log('Extracting boarding position...');
+                // PHASE 4: Extract boarding position
+                console.log('═══ PHASE 4: Extracting boarding position ═══');
                 
-                // Try multiple selectors for boarding position
-                const boardingSelectors = [
-                    '.boarding-position',
-                    '[data-qa="boarding-position"]',
-                    '.boarding-group',
-                    '.confirmation-number',
+                const pageContent = await page.content();
+                await Actor.setValue('final-page-html', pageContent, { contentType: 'text/html' });
+
+                // Try multiple patterns to extract boarding position
+                const patterns = [
+                    /boarding\s+position[:\s]+([A-C]\d{1,2})/i,
+                    /position[:\s]+([A-C]\d{1,2})/i,
+                    /group[:\s]+([A-C])\s+position[:\s]+(\d{1,2})/i,
+                    /([A-C]\d{1,2})/g
                 ];
 
                 let boardingPosition = null;
-
-                // First try specific selectors
-                for (const selector of boardingSelectors) {
-                    try {
-                        const element = await page.$(selector);
-                        if (element) {
-                            const text = await element.textContent();
-                            const match = text.match(/([A-C])(\d{1,2})/);
-                            if (match) {
-                                boardingPosition = match[0];
-                                break;
-                            }
+                for (const pattern of patterns) {
+                    const match = pageContent.match(pattern);
+                    if (match) {
+                        if (match.length >= 3) {
+                            boardingPosition = match[1] + match[2];
+                        } else {
+                            boardingPosition = match[1];
                         }
-                    } catch (e) {
-                        console.log(`Selector ${selector} failed:`, e.message);
-                    }
-                }
-
-                // If still not found, search entire page content
-                if (!boardingPosition) {
-                    console.log('Searching entire page for boarding position...');
-                    const pageContent = await page.content();
-                    
-                    // Look for patterns like "A24", "B15", "C60"
-                    const patterns = [
-                        /boarding\s+position[:\s]+([A-C]\d{1,2})/i,
-                        /position[:\s]+([A-C]\d{1,2})/i,
-                        /group[:\s]+([A-C])\s+position[:\s]+(\d{1,2})/i,
-                        /([A-C]\d{1,2})/g
-                    ];
-
-                    for (const pattern of patterns) {
-                        const match = pageContent.match(pattern);
-                        if (match) {
-                            if (match.length >= 3) {
-                                // Pattern with separate group and position
-                                boardingPosition = match[1] + match[2];
-                            } else {
-                                boardingPosition = match[1];
-                            }
-                            if (boardingPosition && /^[A-C]\d{1,2}$/.test(boardingPosition)) {
-                                console.log(`Found boarding position with pattern: ${pattern}`);
-                                break;
-                            }
+                        if (boardingPosition && /^[A-C]\d{1,2}$/.test(boardingPosition)) {
+                            console.log(`✓ Found boarding position: ${boardingPosition}`);
+                            break;
                         }
                     }
                 }
 
                 if (boardingPosition) {
-                    console.log('✅ Successfully checked in! Boarding position:', boardingPosition);
                     result.success = true;
                     result.boardingPosition = boardingPosition;
+                    console.log(`🎉 SUCCESS! Boarding position: ${boardingPosition}`);
                 } else {
-                    console.log('⚠️ Check-in may have succeeded but could not extract boarding position');
-                    result.success = true; // Assume success if we got this far
-                    result.boardingPosition = 'UNKNOWN';
-                    result.error = 'Could not parse boarding position from page';
+                    // Check if it's "too early" error
+                    if (pageContent.includes('too early') || pageContent.includes('Come back')) {
+                        result.success = false;
+                        result.error = 'Check-in not yet open (too early)';
+                        console.log('⚠️  Check-in window not yet open');
+                    } else {
+                        result.success = true;
+                        result.boardingPosition = 'UNKNOWN';
+                        result.error = 'Could not parse boarding position from page';
+                        console.log('⚠️  Could not parse boarding position');
+                    }
                 }
 
-                // Save full page HTML for debugging
-                const html = await page.content();
-                await Actor.setValue('final-page-html', html, { contentType: 'text/html' });
-
             } catch (error) {
-                console.error('Error during check-in process:', error);
+                console.error('❌ Error during check-in:', error);
                 result.error = error.message;
                 
-                // Take error screenshot
                 try {
                     const screenshotError = await page.screenshot({ fullPage: true });
                     await Actor.setValue('screenshot-error', screenshotError, { contentType: 'image/png' });
                     result.screenshots.push('screenshot-error');
-                } catch (screenshotErr) {
-                    console.error('Could not take error screenshot:', screenshotErr);
+                } catch (e) {
+                    console.error('Could not capture error screenshot');
                 }
             }
         },
@@ -402,16 +277,12 @@ try {
         maxConcurrency: 1,
     });
 
-    // Run the crawler
     await crawler.run(['https://www.southwest.com/air/check-in/index.html']);
 
-    // Push results to dataset
     await Actor.pushData(result);
-
-    // Set output
     await Actor.setValue('OUTPUT', result);
 
-    console.log('Actor finished. Result:', result);
+    console.log('Actor finished. Final result:', result);
 
 } catch (error) {
     console.error('Fatal error:', error);
