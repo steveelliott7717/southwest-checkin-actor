@@ -94,12 +94,12 @@ try {
                 // Step 1: Navigate to check-in page
                 console.log('Navigating to check-in page...');
                 await page.goto('https://www.southwest.com/air/check-in/index.html', {
-                    waitUntil: 'domcontentloaded', // Changed from 'networkidle' to avoid timeout
+                    waitUntil: 'domcontentloaded',
                     timeout: 30000,
                 });
 
-                // Wait for page to be interactive
-                await page.waitForLoadState('load', { timeout: 10000 });
+                // Give page time to initialize
+                await page.waitForTimeout(3000);
 
                 // Take screenshot of initial page
                 const screenshotInitial = await page.screenshot({ fullPage: false });
@@ -117,16 +117,13 @@ try {
                 // Give Southwest's JavaScript time to initialize
                 await page.waitForTimeout(2000);
 
-                // Step 2: Fill in confirmation number
+                // Step 2: Fill in confirmation number ONLY
                 console.log('Filling confirmation number...');
                 
-                // Try multiple possible selectors
                 const confirmationSelectors = [
                     '#confirmationNumber',
                     '#confirmation-number',
                     'input[name="confirmationNumber"]',
-                    'input[aria-label*="confirmation"]',
-                    'input[placeholder*="Confirmation"]'
                 ];
 
                 let confirmationFilled = false;
@@ -149,24 +146,69 @@ try {
                     throw new Error('Could not find or fill confirmation number input field');
                 }
 
-                await page.waitForTimeout(500);
+                await page.waitForTimeout(1000);
 
-                // Step 3: Fill in first name
+                // Take screenshot after filling confirmation
+                const screenshotConfirmation = await page.screenshot({ fullPage: false });
+                await Actor.setValue('screenshot-confirmation-filled', screenshotConfirmation, { contentType: 'image/png' });
+                result.screenshots.push('screenshot-confirmation-filled');
+
+                // Step 3: Click "Continue" or submit button to get to name fields
+                console.log('Clicking continue button...');
+                
+                const continueButtonSelectors = [
+                    'button[type="submit"]',
+                    'button:has-text("Check in")',
+                    '.button--yellow',
+                    'button.button--yellow',
+                ];
+
+                let continueClicked = false;
+                for (const selector of continueButtonSelectors) {
+                    try {
+                        const button = await page.$(selector);
+                        if (button && await button.isVisible()) {
+                            await button.click();
+                            continueClicked = true;
+                            console.log(`Clicked continue button using selector: ${selector}`);
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (!continueClicked) {
+                    throw new Error('Could not find or click continue button');
+                }
+
+                console.log('Continue button clicked, waiting for name entry page...');
+
+                // Wait for next page to load
+                await page.waitForTimeout(3000);
+
+                // Take screenshot of name entry page
+                const screenshotNamePage = await page.screenshot({ fullPage: true });
+                await Actor.setValue('screenshot-name-page', screenshotNamePage, { contentType: 'image/png' });
+                result.screenshots.push('screenshot-name-page');
+                console.log('On name entry page');
+
+                // Step 4: Fill in first name
                 console.log('Filling first name...');
                 
                 const firstNameSelectors = [
                     '#firstName',
                     '#first-name',
                     'input[name="firstName"]',
-                    'input[aria-label*="First"]',
-                    'input[placeholder*="First"]'
+                    'input[placeholder*="First"]',
                 ];
 
                 let firstNameFilled = false;
                 for (const selector of firstNameSelectors) {
                     try {
+                        await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
                         const input = await page.$(selector);
-                        if (input && await input.isVisible()) {
+                        if (input) {
                             await input.click();
                             await input.fill(firstName);
                             firstNameFilled = true;
@@ -174,6 +216,7 @@ try {
                             break;
                         }
                     } catch (e) {
+                        console.log(`First name selector ${selector} failed:`, e.message);
                         continue;
                     }
                 }
@@ -184,22 +227,22 @@ try {
 
                 await page.waitForTimeout(500);
 
-                // Step 4: Fill in last name
+                // Step 5: Fill in last name
                 console.log('Filling last name...');
                 
                 const lastNameSelectors = [
                     '#lastName',
                     '#last-name',
                     'input[name="lastName"]',
-                    'input[aria-label*="Last"]',
-                    'input[placeholder*="Last"]'
+                    'input[placeholder*="Last"]',
                 ];
 
                 let lastNameFilled = false;
                 for (const selector of lastNameSelectors) {
                     try {
+                        await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
                         const input = await page.$(selector);
-                        if (input && await input.isVisible()) {
+                        if (input) {
                             await input.click();
                             await input.fill(lastName);
                             lastNameFilled = true;
@@ -207,6 +250,7 @@ try {
                             break;
                         }
                     } catch (e) {
+                        console.log(`Last name selector ${selector} failed:`, e.message);
                         continue;
                     }
                 }
@@ -215,74 +259,22 @@ try {
                     throw new Error('Could not find or fill last name input field');
                 }
 
-                await page.waitForTimeout(500);
+                await page.waitForTimeout(1000);
 
-                // Take screenshot after filling form
+                // Take screenshot after filling names
                 const screenshotForm = await page.screenshot({ fullPage: false });
                 await Actor.setValue('screenshot-form-filled', screenshotForm, { contentType: 'image/png' });
                 result.screenshots.push('screenshot-form-filled');
                 console.log('Form filled successfully');
 
-                // Step 5: Click "Check In" button to retrieve reservation
-                console.log('Clicking retrieve reservation button...');
+                // Step 6: Click final "Check In" button
+                console.log('Clicking final check-in button...');
                 
-                const retrieveButtonSelectors = [
+                const checkInButtonSelectors = [
                     'button[type="submit"]',
                     'button:has-text("Check in")',
                     '.button--yellow',
                     'button.button--yellow',
-                    '[data-qa="check-in-button"]'
-                ];
-
-                let retrieveClicked = false;
-                for (const selector of retrieveButtonSelectors) {
-                    try {
-                        const button = await page.$(selector);
-                        if (button && await button.isVisible()) {
-                            await button.click();
-                            retrieveClicked = true;
-                            console.log(`Clicked retrieve button using selector: ${selector}`);
-                            break;
-                        }
-                    } catch (e) {
-                        continue;
-                    }
-                }
-
-                if (!retrieveClicked) {
-                    throw new Error('Could not find or click retrieve reservation button');
-                }
-
-                console.log('Retrieve button clicked, waiting for next page...');
-
-                // Wait for navigation with more lenient timeout
-                try {
-                    await page.waitForLoadState('domcontentloaded', { timeout: 15000 });
-                } catch (e) {
-                    console.log('Load state wait timed out, checking page anyway...');
-                }
-
-                // Give the page time to load
-                await page.waitForTimeout(3000);
-
-                // Take screenshot of check-in page
-                const screenshotCheckin = await page.screenshot({ fullPage: true });
-                await Actor.setValue('screenshot-checkin-page', screenshotCheckin, { contentType: 'image/png' });
-                result.screenshots.push('screenshot-checkin-page');
-                console.log('On check-in confirmation page');
-
-                // Step 6: Click final "Check In" button
-                console.log('Looking for final check-in button...');
-                
-                // Wait a bit for the button to appear
-                await page.waitForTimeout(2000);
-
-                const checkInButtonSelectors = [
-                    'button:has-text("Check in")',
-                    '.check-in-button',
-                    'button[data-qa="check-in-button"]',
-                    'button.button--yellow',
-                    'button[type="submit"]'
                 ];
 
                 let checkInClicked = false;
@@ -290,29 +282,31 @@ try {
                     try {
                         const button = await page.$(selector);
                         if (button && await button.isVisible()) {
-                            console.log(`Found check-in button with selector: ${selector}`);
                             await button.click();
                             checkInClicked = true;
-                            console.log('Final check-in button clicked!');
+                            console.log(`Clicked check-in button using selector: ${selector}`);
                             break;
                         }
                     } catch (e) {
-                        console.log(`Selector ${selector} failed:`, e.message);
                         continue;
                     }
                 }
 
                 if (!checkInClicked) {
-                    console.log('Could not find final check-in button, may need to check manually');
+                    throw new Error('Could not find or click check-in button');
                 }
+
+                console.log('Check-in button clicked, waiting for confirmation...');
 
                 // Wait for confirmation page
                 await page.waitForTimeout(5000);
 
-                // Take screenshot of results
-                const screenshotResult = await page.screenshot({ fullPage: true });
-                await Actor.setValue('screenshot-result', screenshotResult, { contentType: 'image/png' });
-                result.screenshots.push('screenshot-result');
+                // Take screenshot of check-in confirmation page
+                const screenshotCheckin = await page.screenshot({ fullPage: true });
+                await Actor.setValue('screenshot-checkin-page', screenshotCheckin, { contentType: 'image/png' });
+                result.screenshots.push('screenshot-checkin-page');
+                console.log('On check-in confirmation page');
+
 
                 // Step 7: Extract boarding position
                 console.log('Extracting boarding position...');
