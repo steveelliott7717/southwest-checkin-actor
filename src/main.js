@@ -54,8 +54,12 @@ try {
         screenshots: [],
     };
 
-    // Configure proxy (optional, but recommended for reliability)
-    const proxyConfiguration = await Actor.createProxyConfiguration();
+    // Configure RESIDENTIAL proxy - CRITICAL for bypassing Southwest's blocking
+    // Apify's datacenter IPs are blocked, so we MUST use residential proxies
+    const proxyConfiguration = await Actor.createProxyConfiguration({
+        groups: ['RESIDENTIAL'],
+        countryCode: 'US',
+    });
 
     // Create crawler
     const crawler = new PlaywrightCrawler({
