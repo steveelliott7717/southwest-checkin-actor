@@ -143,7 +143,7 @@ try {
     });
     
     const submitProxy = await Actor.createProxyConfiguration({
-        groups: ['DATACENTER'],  // Or 'SW_FASTLANE_USC' if you create a custom group
+        groups: ['BUYPROXIES94952'],  // 👈 use the actual group name
         countryCode: 'US',
     });
 
